@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Particle Hand System</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;
+        }
+        #three-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+        #webcam {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.22;
+            z-index: 2;
+        }
+        #hand-canvas {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 3;
+            pointer-events: none;
+        }
+        #status {
+            position: fixed;
+            top: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 80, 120, 0.9);
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 14px;
+            letter-spacing: 2px;
+            z-index: 10;
+            text-shadow: 0 0 15px rgba(255, 80, 120, 0.8);
+        }
+        #hint {
+            position: fixed;
+            bottom: 20px;
+            right: 24px;
+            color: rgba(255, 255, 255, 0.35);
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 12px;
+            line-height: 1.9;
+            text-align: right;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="three-canvas"></canvas>
+    <video id="webcam" autoplay muted playsinline></video>
+    <canvas id="hand-canvas"></canvas>
+    <div id="status">PARTICLE HEART ♥</div>
+    <div id="hint">
+       Number of fingers raised:<br>
+        1 = Push particles<br>
+        2 = Form a star<br>
+        3 = Form a ball<br>
+        0 or 4+ = Form a heart
+    </div>
+
+    <script>
+        // --- 1. INITIALIZATION & GLOBAL STATES ---
+        const videoEl = document.getElementById('webcam');
+        const handCanvas = document.getElementById('hand-canvas');
+        const hCtx = handCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+
+        let currentShape = 'heart';
+        let handPoint = new THREE.Vector3();
+        let pushing = false;
+        let targetRotX = 0, targetRotY = 0, targetScl = 1;
+
+        // --- 2. THREE.JS INITIALIZATION ---
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('three-canvas'), antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const scene = new THREE.Scene();
+        const cam3d = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        cam3d.position.z = 5;
+
+        const COUNT = 18000;
+        const geo = new THREE.BufferGeometry();
+        const positions = new Float32Array(COUNT * 3);
+        const targets = new Float32Array(COUNT * 3);
+        const colors = new Float32Array(COUNT * 3);
+
+        // Color and Initial Position Distribution Loop
+        for (let i = 0; i < COUNT; i++) {
+            // Colors
+            const rand = Math.random();
+            let r = 1, g = 0.2, b = 0.4; // Default pink
+            if (rand >= 0.5 && rand < 0.8) {
+                r = 1; g = 0.05; b = 0.2; // Red
+            } else if (rand >= 0.8) {
+                r = 1; g = 0.8; b = 0.9; // White-pink
+            }
+            colors[i * 3] = r;
+            colors[i * 3 + 1] = g;
+            colors[i * 3 + 2] = b;
+
+            // Scattered Positions
+            positions[i * 3] = (Math.random() - 0.5) * 10;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 10;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 10;
+        }
+
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const mat = new THREE.PointsMaterial({
+            size: 0.03,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const ps = new THREE.Points(geo, mat);
+        scene.add(ps);
+
+        // --- 3. MATHEMATICAL SHAPES FUNCTIONS ---
+        function heart() {
+            for (let i = 0; i < COUNT; i++) {
+                const t = Math.random() * Math.PI * 2;
+                const r = Math.pow(Math.random(), 0.5);
+                const x = 16 * Math.pow(Math.sin(t), 3);
+                const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+                const z = (Math.random() - 0.5) * 8;
+                const s = 0.13 * r;
+                
+                targets[i * 3] = x * s;
+                targets[i * 3 + 1] = y * s;
+                targets[i * 3 + 2] = z * 0.1;
+            }
+        }
+
+        function star() {
+            for (let i = 0; i < COUNT; i++) {
+                const r = Math.pow(Math.random(), 0.5) * 2.5;
+                const branch = i % 5;
+                const branchAngle = (branch / 5 + Math.random() * 0.08) * Math.PI * 2;
+                
+                targets[i * 3] = Math.cos(branchAngle) * r;
+                targets[i * 3 + 1] = Math.sin(branchAngle) * r;
+                targets[i * 3 + 2] = (Math.random() - 0.5) * 1.5;
+            }
+        }
+
+        function sphere() {
+            for (let i = 0; i < COUNT; i++) {
+                const r = Math.pow(Math.random(), 0.3) * 2.2;
+                const a = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                targets[i * 3] = r * Math.sin(phi) * Math.cos(a);
+                targets[i * 3 + 1] = r * Math.sin(phi) * Math.sin(a);
+                targets[i * 3 + 2] = r * Math.cos(phi);
+            }
+        }
+
+        // Initialize shape
+        heart();
+
+        // --- 4. MEDIAPIPE HANDS & PERFECTED MIRROR LOGIC ---
+        function resizeHandCanvas() {
+            handCanvas.width = window.innerWidth;
+            handCanvas.height = window.innerHeight;
+        }
+        resizeHandCanvas();
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.5,
+            selfieMode: true
+        });
+
+        hands.onResults((results) => {
+            hCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                pushing = false;
+                return;
+            }
+
+            // Draw overlaid hands landmarks on the 2D canvas
+            for (const landmarks of results.multiHandLandmarks) {
+                drawConnectors(hCtx, landmarks, HAND_CONNECTIONS, { color: 'rgba(255, 80, 150, 0.85)', lineWidth: 3 });
+                drawLandmarks(hCtx, landmarks, { color: '#fff', fillColor: 'rgba(255, 80, 150, 0.7)', radius: 5 });
+            }
+
+            // Use the primary/first detected hand for interactive data calculations
+            const lm = results.multiHandLandmarks[0];
+            const tip = lm[8]; // Index Finger Tip
+
+            // MIRROR FIX FOR ROTATION: Moving physical hand right moves interaction right.
+            // When selfieMode is true, moving hand to physical right maps to lower tip.x values.
+            // Using (0.5 - tip.x) ensures positive rotation to the right.
+            targetRotY = (0.5 - tip.x) * Math.PI * 4;
+            targetRotX = (tip.y - 0.5) * Math.PI * 4;
+
+            // MIRROR FIX FOR PUSH POINT: Coordinates match screen perfectly in mirror mode
+            handPoint.set((0.5 - tip.x) * 10, (0.5 - tip.y) * 10, 0);
+
+            // Extended fingers logic
+            const extArray = [8, 12, 16, 20].filter(j => lm[j].y < lm[j - 2].y);
+            const ext = extArray.length;
+
+            // Scale logic if hand is 'Right' (MediaPipe flips labels in selfie mode, checking structural label)
+            const handLabel = results.multiHandedness[0].label;
+            if (handLabel === 'Right') {
+                const d = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+                targetScl = THREE.MathUtils.clamp(d * 6, 0.3, 3);
+            }
+
+            // Shape switching structure & pushing states
+            if (ext === 1) {
+                pushing = true;
+            } else {
+                pushing = false;
+                if (ext === 2 && currentShape !== 'star') {
+                    star();
+                    currentShape = 'star';
+                    statusEl.innerText = "PARTICLE STAR ★";
+                } else if (ext === 3 && currentShape !== 'sphere') {
+                    sphere();
+                    currentShape = 'sphere';
+                    statusEl.innerText = "PARTICLE SPHERE ●";
+                } else if ((ext === 0 || ext >= 4) && currentShape !== 'heart') {
+                    heart();
+                    currentShape = 'heart';
+                    statusEl.innerText = "PARTICLE HEART ♥";
+                }
+            }
+        });
+
+        // --- 5. CAMERA INITIALIZATION ---
+        function startCam() {
+            navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
+                .then((stream) => {
+                    videoEl.srcObject = stream;
+                    const camera = new Camera(videoEl, {
+                        onFrame: async () => {
+                            await hands.send({ image: videoEl });
+                        },
+                        width: 1280,
+                        height: 720
+                    });
+                    camera.start();
+                })
+                .catch(() => {
+                    statusEl.innerText = 'Camera access denied. Please allow camera permissions to use this application.';
+                });
+        }
+        startCam();
+
+        // --- 6. ANIMATION LOOP ---
+        const posAttr = geo.attributes.position;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Lerp points mapping & physics interaction logic
+            for (let i = 0; i < COUNT; i++) {
+                let px = posAttr.array[i * 3];
+                let py = posAttr.array[i * 3 + 1];
+                let pz = posAttr.array[i * 3 + 2];
+
+                const tx = targets[i * 3];
+                const ty = targets[i * 3 + 1];
+                const tz = targets[i * 3 + 2];
+
+                // Smooth morph lerping
+                px += (tx - px) * 0.07;
+                py += (ty - py) * 0.07;
+                pz += (tz - pz) * 0.07;
+
+                // Dynamic hand push force computation
+                if (pushing) {
+                    // Compute transformed position for accurate proximity checks
+                    const v = new THREE.Vector3(px, py, pz).applyQuaternion(ps.quaternion).multiply(ps.scale);
+                    const dx = v.x - handPoint.x;
+                    const dy = v.y - handPoint.y;
+                    const dSq = dx * dx + dy * dy;
+
+                    if (dSq < 1.5) {
+                        const force = (1.5 - dSq) * 0.35;
+                        // Transform pushing force backwards into system space orientation
+                        const pushVec = new THREE.Vector3(dx, dy, 0).normalize().multiplyScalar(force);
+                        pushVec.applyQuaternion(ps.quaternion.clone().invert());
+                        px += pushVec.x;
+                        py += pushVec.y;
+                    }
+                }
+
+                posAttr.array[i * 3] = px;
+                posAttr.array[i * 3 + 1] = py;
+                posAttr.array[i * 3 + 2] = pz;
+            }
+
+            posAttr.needsUpdate = true;
+
+            // Global System Transform Interpolations
+            ps.rotation.x = THREE.MathUtils.lerp(ps.rotation.x, targetRotX, 0.08);
+            ps.rotation.y = THREE.MathUtils.lerp(ps.rotation.y, targetRotY, 0.08);
+            
+            const s = THREE.MathUtils.lerp(ps.scale.x, targetScl, 0.08);
+            ps.scale.set(s, s, s);
+
+            renderer.render(scene, cam3d);
+        }
+        animate();
+
+        // --- 7. EVENT LISTENERS ---
+        window.addEventListener('resize', () => {
+            cam3d.aspect = window.innerWidth / window.innerHeight;
+            cam3d.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            resizeHandCanvas();
+        });
+    </script>
+</body>
+</html>
